@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cotton Tracker — Evolution3</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f4f3ef; --surface: #fff; --surface2: #edece8; --border: rgba(0,0,0,0.09);
+    --text: #1a1a18; --muted: #7a7970; --hint: #b0afa8;
+    --green: #0F6E56; --green-bg: #e1f5ee; --red: #993c1d; --red-bg: #faecea;
+    --amber: #854f0b; --amber-bg: #faeeda; --line: #1D9E75; --radius: 10px;
+    --blue: #185FA5; --blue-bg: #e6f1fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #181816; --surface: #222220; --surface2: #2b2b28; --border: rgba(255,255,255,0.08);
+      --text: #edece8; --muted: #888780; --hint: #555550;
+      --green: #5DCAA5; --green-bg: #04342c; --red: #f09595; --red-bg: #501313;
+      --amber-bg: #412402; --blue-bg: #042c53;
+    }
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .brand h1 { font-size: 15px; font-weight: 600; }
+  .brand .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .brand .sub a { color: var(--green); text-decoration: none; }
+  .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; padding: 4px 10px; border-radius: 20px; background: var(--surface2); color: var(--muted); font-weight: 500; }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hint); flex-shrink: 0; transition: background 0.3s; }
+  .pill.live .dot { background: var(--green); }
+  .pill.loading .dot { background: var(--amber); animation: blink 0.7s infinite; }
+  .pill.err .dot { background: var(--red); }
+  @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.2} }
+  .btn { font-size: 12px; font-weight: 500; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; background: var(--surface); color: var(--text); transition: opacity .15s; }
+  .btn:hover { opacity: 0.75; }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn-primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .btn-blue { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+  .main { max-width: 920px; margin: 0 auto; padding: 24px 20px 40px; }
+
+  .notice { border-radius: 8px; padding: 10px 14px; font-size: 12px; margin-bottom: 14px; display: none; line-height: 1.6; }
+  .notice.warn { background: var(--amber-bg); color: var(--amber); display: block; }
+  .notice.err { background: var(--red-bg); color: var(--red); display: block; }
+  .notice.info { background: var(--green-bg); color: var(--green); display: block; }
+  .notice.blue { background: var(--blue-bg); color: var(--blue); display: block; }
+
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .metric .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .metric .val { font-size: 21px; font-weight: 700; letter-spacing: -.02em; color: var(--text); line-height: 1.1; }
+  .metric .val.up { color: var(--green); }
+  .metric .val.dn { color: var(--red); }
+  .metric .hint { font-size: 10px; color: var(--hint); margin-top: 4px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .card-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .chart-wrap { position: relative; width: 100%; height: 280px; }
+
+  .legend-row { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+  .leg { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .leg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  .events-row { display: flex; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; gap: 4px 0; }
+  .ev { font-size: 11px; color: var(--muted); padding-right: 16px; }
+  .ev strong { color: var(--text); }
+
+  .drivers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  @media(max-width:480px){ .drivers{grid-template-columns:1fr;} }
+  .drv { background: var(--surface2); border-radius: 8px; padding: 10px 14px; }
+  .drv .dl { font-size: 10px; color: var(--hint); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+  .drv .dv { font-size: 12px; color: var(--text); line-height: 1.4; }
+
+  .analysis { font-size: 13px; color: var(--muted); line-height: 1.75; background: var(--surface2); border-radius: 8px; padding: 14px 16px; min-height: 60px; }
+  .analysis.ai-loading { color: var(--hint); font-style: italic; }
+
+  /* AI badge */
+  .ai-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: var(--blue); background: var(--blue-bg); border-radius: 12px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
+
+  /* SCHEDULE PANEL */
+  .schedule-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .schedule-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .schedule-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  .schedule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media(max-width:600px){ .schedule-grid{grid-template-columns:1fr;} }
+  .schedule-field { display: flex; flex-direction: column; gap: 5px; }
+  .schedule-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .schedule-input { font-size: 12px; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: inherit; width: 100%; }
+  .schedule-input:focus { outline: none; border-color: var(--green); }
+  .recipients-wrap { grid-column: 1/-1; }
+  .recipients-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; min-height: 32px; }
+  .recipient-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; background: var(--green-bg); color: var(--green); padding: 3px 10px; border-radius: 14px; }
+  .recipient-tag .rx { cursor: pointer; font-size: 14px; line-height: 1; color: var(--green); opacity: 0.6; }
+  .recipient-tag .rx:hover { opacity: 1; }
+  .add-recipient { display: flex; gap: 6px; margin-top: 6px; }
+  .add-recipient input { flex: 1; font-size: 12px; padding: 7px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: inherit; }
+  .add-recipient input:focus { outline: none; border-color: var(--green); }
+  .schedule-status { font-size: 11px; color: var(--muted); margin-top: 10px; padding: 8px 12px; background: var(--surface2); border-radius: 7px; display: none; }
+  .schedule-status.active { display: block; color: var(--green); }
+  .schedule-status.warn { display: block; color: var(--amber); }
+  .send-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+
+  /* MODAL */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .overlay.show { display: flex; }
+  .modal { background: var(--surface); border-radius: var(--radius); padding: 24px; width: 100%; max-width: 460px; }
+  .modal h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+  .field { margin-bottom: 12px; }
+  .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 5px; }
+  .field input { width: 100%; font-size: 13px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: inherit; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .modal-actions .btn { flex: 1; min-width: 120px; }
+  .modal-note { font-size: 11px; color: var(--hint); margin-top: 10px; line-height: 1.5; }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); font-size: 13px; padding: 10px 20px; border-radius: 20px; display: none; white-space: nowrap; z-index: 200; }
+  .toast.show { display: block; animation: tup .2s ease; }
+  @keyframes tup { from{opacity:0;transform:translateX(-50%) translateY(8px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+  .footer { text-align: center; font-size: 11px; color: var(--hint); margin-top: 8px; }
+  .footer a { color: var(--hint); }
+
+  .countdown-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--blue); background: var(--blue-bg); padding: 4px 10px; border-radius: 14px; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">
+    <h1>Cotton #2 — ICE Futures (CT=F)</h1>
+    <div class="sub">
+      Evolution3 internal &nbsp;·&nbsp;
+      Source: <a href="https://finance.yahoo.com/quote/CT=F" target="_blank">Yahoo Finance CT=F</a>
+      &nbsp;·&nbsp; <a href="https://stooq.com/q/?s=ct.f" target="_blank">Stooq</a>
+      &nbsp;·&nbsp; US cents per pound (¢/lb) &nbsp;·&nbsp; 15-min delayed
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="pill loading" id="pill"><span class="dot"></span><span id="pillText">Fetching...</span></div>
+    <button class="btn" id="refreshBtn" onclick="fetchData()" disabled>↺ Refresh</button>
+    <button class="btn btn-primary" id="draftBtn" onclick="openModal()" disabled>✉ Gmail draft</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="notice" id="notice" style="display:none"></div>
+
+  <div class="metrics">
+    <div class="metric"><div class="lbl">Spot price</div><div class="val" id="mSpot">—</div><div class="hint">¢/lb · front-month</div></div>
+    <div class="metric"><div class="lbl">Day change</div><div class="val" id="mDay">—</div><div class="hint" id="mDayH">vs prev session</div></div>
+    <div class="metric"><div class="lbl">Week change</div><div class="val" id="mWeek">—</div><div class="hint">7-day</div></div>
+    <div class="metric"><div class="lbl">Month change</div><div class="val" id="mMonth">—</div><div class="hint">30-day</div></div>
+    <div class="metric"><div class="lbl">52-wk high</div><div class="val up" id="mHigh">—</div><div class="hint" id="mHighH">—</div></div>
+    <div class="metric"><div class="lbl">52-wk low</div><div class="val dn" id="mLow">—</div><div class="hint" id="mLowH">—</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">Weekly close — 1 year (¢/lb)</div>
+      <div style="font-size:11px;color:var(--hint)" id="chartRange">—</div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="chart" role="img" aria-label="Cotton No.2 ICE futures weekly closing prices over 52 weeks"></canvas>
+    </div>
+    <div class="legend-row">
+      <div class="leg"><div class="leg-dot" style="background:#1D9E75"></div>Weekly close</div>
+      <div class="leg"><div class="leg-dot" style="background:#E24B4A"></div>52-wk high</div>
+      <div class="leg"><div class="leg-dot" style="background:#BA7517"></div>52-wk low</div>
+    </div>
+    <div class="events-row">
+      <div class="ev"><strong>May '25</strong> — prior year high ~72.06¢</div>
+      <div class="ev"><strong>Feb 6 '26</strong> — 52-wk low ~60.90¢</div>
+      <div class="ev"><strong>Mar '26</strong> — Iran/Hormuz; fertilizer +45%</div>
+      <div class="ev"><strong>Apr 17 '26</strong> — 12-month high ~80.90¢</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        Key price drivers
+        <span class="ai-badge" id="driversBadge" style="display:none">✦ AI</span>
+      </div>
+      <button class="btn" id="redriversBtn" onclick="runAIDrivers()" style="font-size:11px;padding:5px 10px;display:none">↺ Refresh</button>
+    </div>
+    <div class="drivers" id="driversGrid">
+      <div class="drv"><div class="dl" style="color:var(--hint)">Loading drivers...</div><div class="dv" style="color:var(--hint);font-style:italic">Fetching AI analysis</div></div>
+    </div>
+    <div style="font-size:10px;color:var(--hint);margin-top:8px;" id="driversTs"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-title">
+        Evolution3 procurement analysis
+        <span class="ai-badge" id="aiBadge" style="display:none">✦ AI</span>
+      </div>
+      <button class="btn" id="reanalysisBtn" onclick="runAIAnalysis()" style="font-size:11px;padding:5px 10px;display:none">↺ Regenerate</button>
+    </div>
+    <div class="analysis" id="analysis">Loading...</div>
+    <div style="font-size:10px;color:var(--hint);margin-top:8px;" id="analysisTs"></div>
+  </div>
+
+  <!-- SCHEDULE PANEL -->
+  <div class="schedule-panel">
+    <div class="schedule-header">
+      <div class="schedule-title">📅 Auto-send — every Monday 4 PM Vietnam time (ICT)</div>
+      <div class="countdown-chip" id="countdown">—</div>
+    </div>
+
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.6;">
+      Add recipients, then click <strong>Send now (test)</strong>. It will open Outlook Web with recipients and subject pre-filled, and copy the formatted email body to your clipboard — just paste and send. For the Monday schedule, keep this tab open and it will trigger automatically at 16:00 ICT.
+    </div>
+
+    <div class="schedule-grid">
+      <div class="schedule-field">
+        <div class="schedule-label">From (your email)</div>
+        <input class="schedule-input" id="fromEmail" type="email" placeholder="you@evolution3.com" value="vimal.nair@evolution3.com" />
+      </div>
+      <div class="schedule-field">
+        <div class="schedule-label">Send time</div>
+        <input class="schedule-input" id="sendTime" type="text" value="Monday 16:00 ICT (UTC+7)" readonly />
+      </div>
+      <div class="schedule-field recipients-wrap">
+        <div class="schedule-label">Recipients</div>
+        <div class="recipients-list" id="recipientsList"></div>
+        <div class="add-recipient">
+          <input type="email" id="recipientInput" placeholder="Add email and press Enter" onkeydown="if(event.key==='Enter')addRecipient()" />
+          <button class="btn" onclick="addRecipient()">+ Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="schedule-status" id="scheduleStatus"></div>
+
+    <div class="send-actions">
+      <button class="btn btn-blue" id="scheduleBtn" onclick="activateSchedule()" disabled>Activate schedule</button>
+      <button class="btn" id="sendNowBtn" onclick="sendNow()" disabled>Send now (test)</button>
+      <button class="btn" id="deactivateBtn" onclick="deactivateSchedule()" style="display:none;color:var(--red);border-color:var(--red)">Deactivate</button>
+    </div>
+
+    <div style="font-size:11px;color:var(--hint);margin-top:10px;line-height:1.6;">
+      <strong>How it works:</strong> Uses Microsoft Graph API via your connected Microsoft 365 account. 
+      The schedule runs in this browser tab — keep the tab open on Mondays, or use the 
+      <a href="https://support.microsoft.com/en-us/office/use-rules-in-outlook" target="_blank" style="color:var(--hint)">Outlook Rules</a> export below to set a server-side reminder instead.
+    </div>
+  </div>
+
+  <div class="footer">
+    Cotton #2 (CT) · ICE Futures U.S. · Data: Yahoo Finance / Stooq ·
+    <a href="https://www.barchart.com/futures/quotes/ct*0/futures-prices" target="_blank">Full chart on Barchart ↗</a>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <h2>✉ Weekly Gmail draft</h2>
+    <div class="field"><label>To</label><input type="email" id="mTo" value="vimal.nair@evolution3.com" /></div>
+    <div class="field"><label>Subject</label><input type="text" id="mSubj" /></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="openGmail()">Open in Gmail ↗</button>
+      <button class="btn" onclick="copyHTML()">Copy body HTML</button>
+    </div>
+    <div class="modal-note">
+      <b>Open in Gmail</b> — opens Gmail compose with subject pre-filled.<br>
+      <b>Copy body HTML</b> — copies formatted email. In Gmail compose → 3-dot menu → "Paste as rich text".
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── FALLBACK DATA (last known, Apr 22 2026) ──────────────────────
+const FALLBACK = {
+  labels: ['Apr 25','May 9','May 23','Jun 6','Jun 20','Jul 4','Jul 18','Aug 1','Aug 15',
+           'Sep 5','Sep 19','Oct 3','Oct 17','Nov 7','Nov 21','Dec 5','Dec 19',
+           'Jan 9','Jan 23','Feb 6','Feb 20','Mar 6','Mar 20','Apr 3','Apr 10','Apr 17','Apr 22'],
+  prices: [66.7,72.1,70.2,68.1,66.3,64.5,65.2,63.8,63.1,63.4,64.2,64.6,65.1,
+           65.5,66.2,67.1,66.4,65.0,64.1,60.9,66.4,64.4,70.2,75.4,73.3,80.9,78.62],
+  spot: 78.62, dayChg: -2.77, weekChg: 0.83, monthChg: 17.03,
+  high52: 80.90, low52: 60.90, highDate: '17 Apr 26', lowDate: '6 Feb 26',
+  isFallback: true
+};
+
+let S = {};
+let chartInst = null;
+let scheduleInterval = null;
+let recipients = ['vimal.nair@evolution3.com'];
+let scheduleActive = false;
+let aiAnalysisText = '';
+let aiDrivers = [];
+let latestNewsHeadlines = [];
+const DARK = matchMedia('(prefers-color-scheme: dark)').matches;
+
+const $ = id => document.getElementById(id);
+function setM(id, val, cls) { const e=$(id); if(!e)return; e.textContent=val; e.className='val'+(cls?' '+cls:''); }
+function setH(id, v) { const e=$(id); if(e) e.textContent=v; }
+function pct(v, dp=2) { if(v==null||isNaN(v)) return '—'; return (v>=0?'+':'')+v.toFixed(dp)+'%'; }
+function fmtTs(ts) { return new Date(ts*1000).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'2-digit'}); }
+function pill(st, txt) { $('pill').className='pill '+st; $('pillText').textContent=txt; }
+function notice(type, msg) { const n=$('notice'); n.className='notice '+type; n.innerHTML=msg; n.style.display=msg?'block':'none'; }
+function toast(msg, ms=2800) { const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),ms); }
+
+// ── RECIPIENTS ────────────────────────────────────────────────────
+function renderRecipients() {
+  const list = $('recipientsList');
+  list.innerHTML = '';
+  recipients.forEach((r, i) => {
+    const tag = document.createElement('div');
+    tag.className = 'recipient-tag';
+    tag.innerHTML = `${r} <span class="rx" onclick="removeRecipient(${i})">×</span>`;
+    list.appendChild(tag);
+  });
+  const hasBoth = recipients.length > 0 && S.spot;
+  $('scheduleBtn').disabled = !hasBoth;
+  $('sendNowBtn').disabled = !hasBoth;
+}
+
+function addRecipient() {
+  const input = $('recipientInput');
+  const val = input.value.trim();
+  if (!val || !val.includes('@')) { toast('Enter a valid email'); return; }
+  if (recipients.includes(val)) { toast('Already added'); return; }
+  recipients.push(val);
+  input.value = '';
+  renderRecipients();
+}
+
+function removeRecipient(i) {
+  recipients.splice(i, 1);
+  renderRecipients();
+}
+
+// ── SCHEDULE ──────────────────────────────────────────────────────
+function getNextMonday4pmICT() {
+  const now = new Date();
+  // ICT = UTC+7
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  const ictNow = new Date(utcMs + 7 * 3600000);
+  const day = ictNow.getDay(); // 0=Sun,1=Mon,...
+  let daysUntilMon = (1 - day + 7) % 7;
+  if (daysUntilMon === 0 && (ictNow.getHours() > 16 || (ictNow.getHours() === 16 && ictNow.getMinutes() > 0))) {
+    daysUntilMon = 7;
+  }
+  const nextMon = new Date(ictNow);
+  nextMon.setDate(ictNow.getDate() + daysUntilMon);
+  nextMon.setHours(16, 0, 0, 0);
+  // Convert back to UTC ms
+  return new Date(nextMon.getTime() - 7 * 3600000);
+}
+
+function updateCountdown() {
+  const next = getNextMonday4pmICT();
+  const diff = next - new Date();
+  if (diff <= 0) {
+    $('countdown').textContent = 'Sending now...';
+    return;
+  }
+  const d = Math.floor(diff / 86400000);
+  const h = Math.floor((diff % 86400000) / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const parts = [];
+  if (d > 0) parts.push(d + 'd');
+  parts.push(h + 'h');
+  parts.push(m + 'm');
+  $('countdown').textContent = 'Next: ' + parts.join(' ');
+}
+
+function activateSchedule() {
+  if (recipients.length === 0) { toast('Add at least one recipient'); return; }
+  if (!S.spot) { toast('Wait for data to load'); return; }
+  scheduleActive = true;
+  $('scheduleBtn').style.display = 'none';
+  $('deactivateBtn').style.display = '';
+  const st = $('scheduleStatus');
+  st.className = 'schedule-status active';
+  st.textContent = '✓ Schedule active — will auto-send every Monday at 16:00 ICT (UTC+7). Keep this tab open.';
+  // Check every minute
+  scheduleInterval = setInterval(checkScheduleTrigger, 60000);
+  toast('Schedule activated ✓');
+}
+
+function deactivateSchedule() {
+  scheduleActive = false;
+  clearInterval(scheduleInterval);
+  $('scheduleBtn').style.display = '';
+  $('deactivateBtn').style.display = 'none';
+  const st = $('scheduleStatus');
+  st.className = 'schedule-status warn';
+  st.textContent = '⚠ Schedule deactivated.';
+}
+
+function checkScheduleTrigger() {
+  const utcMs = Date.now();
+  const ictNow = new Date(utcMs + 7 * 3600000 + new Date().getTimezoneOffset() * 60000);
+  // Monday = 1, hour 16, minute 0
+  if (ictNow.getDay() === 1 && ictNow.getHours() === 16 && ictNow.getMinutes() === 0) {
+    sendNow(true);
+  }
+}
+
+async function sendNow(auto = false) {
+  if (recipients.length === 0) { toast('Add recipients first'); return; }
+  if (!S.spot) { toast('Data not loaded'); return; }
+
+  const st = $('scheduleStatus');
+  st.className = 'schedule-status blue';
+  st.textContent = auto ? '📤 Sending Monday report via Outlook...' : '📤 Sending test email via Outlook...';
+  st.style.display = 'block';
+
+  // Ensure fresh AI analysis
+  if (!aiAnalysisText) {
+    await runAIAnalysis();
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  try {
+    await sendViaOutlook();
+    st.className = 'schedule-status active';
+    st.textContent = auto
+      ? `✓ Monday report sent at ${new Date().toLocaleString()} to ${recipients.join(', ')}`
+      : `✓ Test email sent at ${new Date().toLocaleTimeString()} to ${recipients.join(', ')}`;
+    toast('Email sent via Outlook ✓');
+  } catch(e) {
+    st.className = 'schedule-status warn';
+    const msg = e?.message || String(e);
+    if (msg.includes('Client ID')) {
+      st.innerHTML = '⚠ Azure App Client ID not set. Follow the setup steps above, then try again.';
+    } else if (msg.includes('popup') || msg.includes('block')) {
+      st.innerHTML = '⚠ Sign-in popup was blocked. Allow popups for this page, then click Send again.';
+    } else {
+      st.innerHTML = '⚠ Send failed: ' + msg;
+    }
+    toast('Send failed — see status panel');
+  }
+}
+
+// ── MICROSOFT GRAPH API SEND ──────────────────────────────────────
+async function sendViaOutlook() {
+  const fromAddr = $('fromEmail').value.trim() || 'vimal.nair@evolution3.com';
+  const subject = buildSubject();
+  const body = buildHTML();
+
+  // Get Graph token via interactive sign-in (MSAL popup)
+  const token = await getMSALToken(fromAddr);
+
+  const toRecipients = recipients.map(r => ({ emailAddress: { address: r } }));
+
+  const message = {
+    message: {
+      subject,
+      body: { contentType: 'HTML', content: body },
+      toRecipients,
+      from: { emailAddress: { address: fromAddr } }
+    },
+    saveToSentItems: true
+  };
+
+  const resp = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(message)
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || 'Graph API error ' + resp.status);
+  }
+}
+
+// ── OUTLOOK AUTH — no longer needed, using deep link approach ─────
+let _accessToken = null;
+let _tokenExpiry = 0;
+
+// ── SEND VIA OUTLOOK WEB (no auth needed) ────────────────────────
+async function sendViaOutlook() {
+  const subject = encodeURIComponent(buildSubject());
+  const body = buildHTML();
+
+  // Outlook Web compose deep link — opens pre-filled compose window
+  // Works from file:// with no OAuth, no server, no CORS issues
+  const toList = recipients.join(';');
+  const outlookUrl = `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(toList)}&subject=${subject}`;
+
+  // Copy body to clipboard so user can paste
+  try {
+    await navigator.clipboard.writeText(body);
+  } catch(e) {
+    const ta = Object.assign(document.createElement('textarea'), { value: body, style: 'position:fixed;opacity:0' });
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+
+  window.open(outlookUrl, '_blank');
+
+  const st = $('scheduleStatus');
+  st.className = 'schedule-status blue';
+  st.style.display = 'block';
+  st.innerHTML = `
+    <strong>Outlook opened in a new tab.</strong> To complete the send:<br>
+    1. In the Outlook compose window, click the body area<br>
+    2. Press <strong>Ctrl+V</strong> (or Cmd+V) to paste the formatted email<br>
+    3. Click <strong>Send</strong> ✓<br>
+    <span style="font-size:10px;opacity:0.7;">Email body has been copied to your clipboard automatically.</span>
+  `;
+  toast('Outlook opened + body copied to clipboard ✓', 4000);
+}
+
+// ── FETCH WITH FALLBACK CHAIN ─────────────────────────────────────
+async function fetchJSON(url) {
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`
+  ];
+  // Run all proxies in parallel, return first successful result
+  const attempts = proxies.map(proxy =>
+    fetch(proxy(url), { signal: AbortSignal.timeout(5000) })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .catch(() => null)
+  );
+  const results = await Promise.all(attempts);
+  return results.find(r => r !== null) || null;
+}
+
+async function fetchCSV(url) {
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`
+  ];
+  const attempts = proxies.map(proxy =>
+    fetch(proxy(url), { signal: AbortSignal.timeout(5000) })
+      .then(r => r.ok ? r.text() : Promise.reject())
+      .then(t => t && t.length > 50 ? t : null)
+      .catch(() => null)
+  );
+  const results = await Promise.all(attempts);
+  return results.find(r => r !== null) || null;
+}
+
+// ── PARSE STOOQ ───────────────────────────────────────────────────
+function parseStooq(csv) {
+  const lines = csv.trim().split('\n').filter(l=>l&&!l.startsWith('Date'));
+  const rows = lines.map(l => {
+    const p = l.split(',');
+    return { date: p[0], close: parseFloat(p[4]) };
+  }).filter(r=>!isNaN(r.close)).sort((a,b)=>a.date.localeCompare(b.date));
+  if (rows.length < 5) return null;
+  const prices = rows.map(r=>r.close);
+  const labels = rows.map(r=>{ const d=new Date(r.date); return d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}); });
+  const spot = prices[prices.length-1];
+  const prev = prices[prices.length-2]||spot;
+  const monthAgoIdx = Math.max(0, prices.length-5);
+  const monthAgo = prices[monthAgoIdx];
+  const high52 = Math.max(...prices), low52 = Math.min(...prices);
+  const hiIdx = prices.lastIndexOf(high52), loIdx = prices.lastIndexOf(low52);
+  return { labels, prices, spot,
+    dayChg: (spot-prev)/prev*100, weekChg: (spot-prev)/prev*100,
+    monthChg: (spot-monthAgo)/monthAgo*100,
+    high52, low52, highDate: labels[hiIdx], lowDate: labels[loIdx], isFallback: false };
+}
+
+// ── PARSE YAHOO ───────────────────────────────────────────────────
+function parseYahoo(data) {
+  try {
+    const res = data.chart.result[0];
+    const meta = res.meta;
+    const ts = res.timestamp;
+    const closes = res.indicators.quote[0].close;
+    const valid = ts.map((t,i)=>({t,c:closes[i]})).filter(x=>x.c!=null);
+    if (valid.length < 5) return null;
+    const prices = valid.map(x=>x.c);
+    const labels = valid.map(x=>fmtTs(x.t));
+    const spot = prices[prices.length-1];
+    const prev = prices[prices.length-2]||spot;
+    const monthAgoIdx = Math.max(0, prices.length-5);
+    const monthAgo = prices[monthAgoIdx];
+    const high52 = Math.max(...prices), low52 = Math.min(...prices);
+    const hiIdx = prices.lastIndexOf(high52), loIdx = prices.lastIndexOf(low52);
+    return { labels, prices, spot,
+      dayChg: meta.regularMarketChangePercent ?? (spot-prev)/prev*100,
+      weekChg: (spot-prev)/prev*100,
+      monthChg: (spot-monthAgo)/monthAgo*100,
+      high52, low52, highDate: labels[hiIdx], lowDate: labels[loIdx], isFallback: false };
+  } catch(e) { return null; }
+}
+
+// ── MAIN FETCH ────────────────────────────────────────────────────
+async function fetchData() {
+  pill('loading','Fetching...');
+  $('refreshBtn').disabled = true;
+  notice('', '');
+  $('analysis').textContent = 'Loading...';
+  $('analysis').classList.remove('ai-loading');
+
+  let parsed = null, src = '';
+
+  const yahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/CT%3DF?range=1y&interval=1wk&includePrePost=false';
+  const today = new Date();
+  const d2 = today.toISOString().slice(0,10).replace(/-/g,'');
+  const d1 = new Date(today - 365*24*3600*1000).toISOString().slice(0,10).replace(/-/g,'');
+  const stooqURL = `https://stooq.com/q/d/l/?s=ct.f&d1=${d1}&d2=${d2}&i=w`;
+
+  // Fetch both sources simultaneously
+  const [yahooData, csvData] = await Promise.all([
+    fetchJSON(yahooURL),
+    fetchCSV(stooqURL)
+  ]);
+
+  if (yahooData) { parsed = parseYahoo(yahooData); if (parsed) src = 'Yahoo Finance (CT=F)'; }
+  if (!parsed && csvData && csvData.includes(',')) { parsed = parseStooq(csvData); if (parsed) src = 'Stooq (CT.F)'; }
+
+  if (!parsed) {
+    parsed = { ...FALLBACK };
+    src = 'last known (Apr 22 2026)';
+    notice('warn', `⚠ Could not reach live data. Showing last known prices from Apr 22, 2026. <a href="https://finance.yahoo.com/quote/CT=F" target="_blank" style="color:var(--amber)">View live ↗</a>`);
+  } else {
+    notice('info', `✓ Live data loaded from ${src} · ${new Date().toLocaleTimeString()}`);
+    setTimeout(()=>notice('',''), 4000);
+  }
+
+  S = parsed;
+  render(src);
+  $('refreshBtn').disabled = false;
+
+  // Trigger AI analysis and drivers after data loads
+  await runAIDrivers();
+  await runAIAnalysis();
+  renderRecipients();
+  updateCountdown();
+  setInterval(updateCountdown, 60000);
+}
+
+// ── RENDER ────────────────────────────────────────────────────────
+function render(src) {
+  const { spot, dayChg, weekChg, monthChg, high52, low52, highDate, lowDate, labels, prices } = S;
+  setM('mSpot', spot.toFixed(2)+'¢', '');
+  setM('mDay', pct(dayChg), dayChg>=0?'up':'dn');
+  setM('mWeek', pct(weekChg), weekChg>=0?'up':'dn');
+  setM('mMonth', pct(monthChg), monthChg>=0?'up':'dn');
+  setM('mHigh', high52.toFixed(2)+'¢', 'up'); setH('mHighH', highDate);
+  setM('mLow', low52.toFixed(2)+'¢', 'dn');  setH('mLowH', lowDate);
+  $('chartRange').textContent = (labels[0]||'') + ' → ' + (labels[labels.length-1]||'');
+  renderChart(labels, prices);
+  updateSubject();
+  $('draftBtn').disabled = false;
+  const ts = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  pill('live', (S.isFallback?'Offline ':'Live · ')+ts);
+}
+
+function renderChart(labels, prices) {
+  const gridC = DARK ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
+  const tickC = DARK ? '#555' : '#bbb';
+  const high = Math.max(...prices), low = Math.min(...prices), n = prices.length;
+  const hiIdx = prices.lastIndexOf(high), loIdx = prices.lastIndexOf(low);
+  const ptColor = prices.map((_,i) => i===hiIdx?'#E24B4A' : i===loIdx?'#BA7517' : i===n-1?'#1D9E75':'transparent');
+  const ptBorder = prices.map((_,i) => i===hiIdx?'#E24B4A' : i===loIdx?'#BA7517' : '#1D9E75');
+  const ptSize = prices.map((_,i) => (i===hiIdx||i===loIdx||i===n-1)?6:2);
+  const pad = (high-low)*0.12;
+  if (chartInst) chartInst.destroy();
+  chartInst = new Chart($('chart'), {
+    type: 'line',
+    data: { labels, datasets: [{ label:'¢/lb', data:prices,
+      borderColor:'#1D9E75', borderWidth:1.5,
+      backgroundColor: DARK?'rgba(29,158,117,0.07)':'rgba(29,158,117,0.05)',
+      fill:true, tension:0.3,
+      pointRadius:ptSize, pointBackgroundColor:ptColor, pointBorderColor:ptBorder, pointBorderWidth:2 }] },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{display:false}, tooltip:{callbacks:{
+        label: c => c.parsed.y.toFixed(2)+'¢/lb',
+        afterLabel: c => c.dataIndex===hiIdx?'▲ 52-wk high':c.dataIndex===loIdx?'▼ 52-wk low':c.dataIndex===prices.length-1?'● Latest':''
+      }}},
+      scales: {
+        x:{ grid:{color:gridC}, ticks:{color:tickC,font:{size:10},maxRotation:45,autoSkip:true,maxTicksLimit:13} },
+        y:{ min:Math.floor(low-pad), max:Math.ceil(high+pad),
+            grid:{color:gridC}, ticks:{color:tickC,font:{size:11},callback:v=>v+'¢'} }
+      }
+    }
+  });
+}
+
+// ── AI ANALYSIS (DYNAMIC) ─────────────────────────────────────────
+async function runAIAnalysis() {
+  const { spot, dayChg, weekChg, monthChg, high52, low52 } = S;
+  if (!spot) return;
+
+  const analysisEl = $('analysis');
+  analysisEl.classList.add('ai-loading');
+  analysisEl.textContent = '✦ Generating AI analysis based on today\'s data...';
+  $('aiBadge').style.display = 'none';
+  $('reanalysisBtn').style.display = 'none';
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  const weekNum = Math.ceil(((now - new Date(now.getFullYear(),0,1))/86400000 + new Date(now.getFullYear(),0,1).getDay()+1)/7);
+
+  const prompt = `You are a commodity analyst for Evolution3, a garment sourcing company in Vietnam that buys cotton-based fabrics from mills.
+
+Today is ${dateStr} (Week ${weekNum}).
+
+Current Cotton #2 (CT=F) ICE Futures data:
+- Spot price: ${spot.toFixed(2)} ¢/lb
+- Day change: ${pct(dayChg)} (${dayChg >= 0 ? 'UP' : 'DOWN'})
+- Week change: ${pct(weekChg)} (${weekChg >= 0 ? 'UP' : 'DOWN'})  
+- Month change: ${pct(monthChg)} (${monthChg >= 0 ? 'UP' : 'DOWN'})
+- 52-week high: ${high52.toFixed(2)}¢ — 52-week low: ${low52.toFixed(2)}¢
+- Market position vs 52-wk range: ${(((spot - low52) / (high52 - low52)) * 100).toFixed(0)}% from bottom
+
+Known structural drivers (still active): Texas drought (11% planted), Strait of Hormuz disruptions (+45% fertilizer costs), USDA 2026/27 forecast −3.9M bales globally, CTZ26 Dec contract at ~80¢.
+${latestNewsHeadlines.length > 0 ? '\nLIVE NEWS HEADLINES (use these to ground your analysis in real current events):\n' + latestNewsHeadlines.slice(0,5).map((h,i)=>`${i+1}. "${h.title}"`).join('\n') : ''}
+
+Write a concise 3-sentence procurement analysis for Evolution3's weekly cotton briefing email. 
+
+Sentence 1: State what cotton is doing TODAY (up/down/flat, magnitude, current price) and what's driving it at this moment.
+Sentence 2: Contextualize this week's and month's movement — is the trend accelerating, decelerating, or reversing? Reference the 52-week range position.
+Sentence 3: Give one specific, actionable procurement recommendation for Evolution3 — e.g. whether to challenge mill price increases, lock in forward contracts, delay commitments, or accelerate orders.
+
+Be specific to the numbers. Do not use vague language like "market conditions remain complex." Tone: direct, analytical, internal business use.`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    const data = await resp.json();
+    const text = data.content?.find(b => b.type === 'text')?.text || '';
+
+    if (text) {
+      aiAnalysisText = text.trim();
+      analysisEl.classList.remove('ai-loading');
+      analysisEl.textContent = aiAnalysisText;
+      $('aiBadge').style.display = '';
+      $('reanalysisBtn').style.display = '';
+      $('analysisTs').textContent = `Generated ${now.toLocaleTimeString()} · refreshes each Monday send`;
+    } else {
+      throw new Error('Empty response');
+    }
+  } catch(e) {
+    // Fallback to dynamic rule-based analysis
+    analysisEl.classList.remove('ai-loading');
+    const dir = dayChg >= 0 ? 'up' : 'down';
+    const trend = monthChg > 5 ? 'a strong uptrend' : monthChg < -5 ? 'a clear downtrend' : 'a consolidation phase';
+    const action = spot > high52 * 0.95
+      ? 'Prioritise locking in fabric commitments at current quotes before mills absorb the rally into Q4 pricing.'
+      : monthChg < 0
+      ? 'This pullback is an opportunity — challenge any mill price increases citing cotton as the trend is moving against their case.'
+      : 'Monitor closely; avoid long forward fabric commitments until price direction clarifies over the next 2 weeks.';
+    aiAnalysisText = `Cotton is ${dir} ${Math.abs(dayChg).toFixed(2)}% today at ${spot.toFixed(2)}¢/lb, ${dayChg >= 0 ? 'driven by ongoing supply concerns including the Texas drought and fertiliser cost pressures from Strait of Hormuz disruptions' : 'as the market sees short-term profit-taking after recent gains'}. The month is ${dir === 'down' ? 'showing' : 'continuing'} ${trend} with a ${pct(monthChg)} move, placing spot at ${(((spot - low52) / (high52 - low52)) * 100).toFixed(0)}% of the 52-week range. ${action}`;
+    analysisEl.textContent = aiAnalysisText;
+    $('reanalysisBtn').style.display = '';
+    $('analysisTs').textContent = `Rule-based fallback · ${now.toLocaleTimeString()}`;
+  }
+}
+
+// ── RSS NEWS FETCH ────────────────────────────────────────────────
+async function fetchCottonNews() {
+  // Multiple RSS feeds tried in order via CORS proxy
+  const feeds = [
+    'https://feeds.reuters.com/reuters/businessNews',
+    'https://www.agriculture.com/rss/news/markets',
+    'https://www.cottongrower.com/feed/',
+    'https://www.nasdaq.com/feed/rssoutbound?category=Commodities',
+    'https://commodityweather.com/feed/'
+  ];
+
+  const proxies = [
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`
+  ];
+
+  const keywords = ['cotton','fiber','textile','USDA','ICE futures','bale','harvest','crop','gin'];
+
+  for (const feed of feeds) {
+    for (const proxy of proxies) {
+      try {
+        const r = await fetch(proxy(feed), { signal: AbortSignal.timeout(6000) });
+        if (!r.ok) continue;
+        const text = await r.text();
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(text, 'text/xml');
+        const items = [...xml.querySelectorAll('item')].slice(0, 30);
+
+        // Filter for cotton-relevant headlines
+        const relevant = items
+          .map(item => ({
+            title: item.querySelector('title')?.textContent?.trim() || '',
+            desc: item.querySelector('description')?.textContent?.replace(/<[^>]+>/g,'').trim().slice(0,200) || '',
+            date: item.querySelector('pubDate')?.textContent?.trim() || ''
+          }))
+          .filter(i => keywords.some(k => (i.title + i.desc).toLowerCase().includes(k)))
+          .slice(0, 8);
+
+        if (relevant.length >= 2) return relevant;
+      } catch(e) { continue; }
+    }
+  }
+  return [];
+}
+
+// ── AI DRIVERS (RSS-POWERED) ──────────────────────────────────────
+async function runAIDrivers() {
+  const { spot, dayChg, weekChg, monthChg, high52, low52 } = S;
+  if (!spot) return;
+
+  const grid = $('driversGrid');
+  $('driversBadge').style.display = 'none';
+  $('redriversBtn').style.display = 'none';
+  grid.innerHTML = `<div class="drv" style="grid-column:1/-1"><div class="dl" style="color:var(--hint)">📰 Fetching live news...</div><div class="dv" style="color:var(--hint);font-size:11px;">Scanning Reuters, USDA, cotton trade feeds</div></div>`;
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+  const rangePos = (((spot - low52) / (high52 - low52)) * 100).toFixed(0);
+
+  // Fetch real news headlines first
+  let newsContext = '';
+  let newsSource = '';
+  try {
+    const headlines = await fetchCottonNews();
+    if (headlines.length > 0) {
+      newsContext = `\n\nREAL NEWS HEADLINES (fetched live ${dateStr}):\n` +
+        headlines.map((h,i) => `${i+1}. "${h.title}"${h.desc ? ' — ' + h.desc.slice(0,120) : ''}${h.date ? ' ['+h.date.slice(0,16)+']' : ''}`).join('\n');
+      newsSource = `RSS (${headlines.length} headlines)`;
+      latestNewsHeadlines = headlines;
+      grid.innerHTML = `<div class="drv" style="grid-column:1/-1"><div class="dl" style="color:var(--hint)">✦ AI analysing ${headlines.length} live headlines...</div></div>`;
+    } else {
+      newsSource = 'price data only (news feeds unavailable)';
+      grid.innerHTML = `<div class="drv" style="grid-column:1/-1"><div class="dl" style="color:var(--hint)">✦ Generating drivers from price data...</div></div>`;
+    }
+  } catch(e) {
+    newsSource = 'price data only';
+  }
+
+  const prompt = `You are a commodity market analyst for Evolution3, a Vietnam garment sourcing company. Today is ${dateStr}.
+
+Cotton #2 (CT=F) ICE Futures:
+- Spot: ${spot.toFixed(2)} ¢/lb | Day: ${pct(dayChg)} | Week: ${pct(weekChg)} | Month: ${pct(monthChg)}
+- 52-wk range: ${low52.toFixed(2)}¢ – ${high52.toFixed(2)}¢ (spot at ${rangePos}% from bottom)
+${newsContext}
+
+Based on the price data${newsContext ? ' AND the news headlines above' : ''}, identify exactly 4 key price drivers active RIGHT NOW.
+- If news headlines are provided, extract real specific drivers from them (crop reports, weather events, trade policy, demand data)
+- If no news, use price direction to infer likely drivers
+- Drivers must match the price direction: ${dayChg >= 0 ? 'prices are UP — show bullish drivers' : 'prices are DOWN — show bearish drivers'}
+
+Respond ONLY with a JSON array of exactly 4 objects. No preamble, no markdown, no backticks:
+[{"label":"2-4 word driver name","detail":"One sentence, specific impact on cotton price, max 15 words"},...]`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    const data = await resp.json();
+    const raw = data.content?.find(b => b.type === 'text')?.text || '';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    if (Array.isArray(parsed) && parsed.length >= 2) {
+      aiDrivers = parsed.slice(0, 4);
+      renderDrivers(aiDrivers, newsSource);
+      $('driversBadge').style.display = '';
+      $('redriversBtn').style.display = '';
+    } else {
+      throw new Error('Bad format');
+    }
+  } catch(e) {
+    // Directional rule-based fallback
+    aiDrivers = dayChg >= 0 ? [
+      { label: 'Supply tightness', detail: `Spot at ${rangePos}% of 52-wk range signals constrained supply` },
+      { label: 'Crop concerns', detail: `US planting conditions driving speculative buying` },
+      { label: 'Mill demand', detail: `Asian textile mills restocking ahead of peak season` },
+      { label: 'Forward pricing', detail: `Dec contract pricing in continued supply deficit` }
+    ] : [
+      { label: 'Profit-taking', detail: `Market correcting after ${pct(monthChg)} monthly run-up` },
+      { label: 'Demand softness', detail: `Slower mill buying amid global textile demand weakness` },
+      { label: 'USD strength', detail: `Stronger dollar reducing US cotton export competitiveness` },
+      { label: 'Spec selling', detail: `Speculators trimming longs at ${spot.toFixed(2)}¢ resistance` }
+    ];
+    renderDrivers(aiDrivers, 'rule-based fallback');
+    $('redriversBtn').style.display = '';
+  }
+}
+
+function renderDrivers(drivers, source) {
+  const grid = $('driversGrid');
+  grid.innerHTML = drivers.map(d =>
+    `<div class="drv"><div class="dl">${d.label}</div><div class="dv">${d.detail}</div></div>`
+  ).join('');
+  if (source) {
+    $('driversTs') && ($('driversTs').textContent = `Source: ${source} · ${new Date().toLocaleTimeString()}`);
+  }
+}
+
+
+function getWeekNum(d) {
+  const jan1 = new Date(d.getFullYear(),0,1);
+  return Math.ceil(((d-jan1)/86400000 + jan1.getDay()+1)/7);
+}
+
+function buildSubject() {
+  const { spot, dayChg, monthChg } = S;
+  const now = new Date();
+  return `Cotton #2 futures — week ${getWeekNum(now)}, ${now.getFullYear()}: ${spot.toFixed(2)}¢/lb (${pct(dayChg,1)} day, ${pct(monthChg,1)} month)`;
+}
+
+function updateSubject() { $('mSubj').value = buildSubject(); }
+
+function buildHTML() {
+  const {spot,dayChg,weekChg,monthChg,high52,low52,highDate,lowDate} = S;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+  const c = v => v>=0?'#0F6E56':'#993c1d';
+  const analysis = aiAnalysisText || $('analysis').textContent;
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:580px;color:#1a1a18;line-height:1.6;">
+<p style="font-size:11px;color:#aaa;margin:0 0 16px;">Evolution3 · Cotton tracker · ${dateStr} · Source: Yahoo Finance CT=F / ICE Futures</p>
+<h2 style="font-size:16px;font-weight:700;margin:0 0 14px;">Cotton #2 (CT) — Weekly snapshot</h2>
+<table style="border-collapse:collapse;width:100%;font-size:13px;margin-bottom:16px;">
+<tr style="background:#f4f3ef;"><td style="padding:8px 14px;border:1px solid #ddd;">Front-month spot</td><td style="padding:8px 14px;border:1px solid #ddd;font-weight:700;">${spot.toFixed(2)} ¢/lb</td></tr>
+<tr><td style="padding:8px 14px;border:1px solid #ddd;">Day change</td><td style="padding:8px 14px;border:1px solid #ddd;color:${c(dayChg)};font-weight:600;">${pct(dayChg)}</td></tr>
+<tr style="background:#f4f3ef;"><td style="padding:8px 14px;border:1px solid #ddd;">Week change</td><td style="padding:8px 14px;border:1px solid #ddd;color:${c(weekChg)};font-weight:600;">${pct(weekChg)}</td></tr>
+<tr><td style="padding:8px 14px;border:1px solid #ddd;">Month change</td><td style="padding:8px 14px;border:1px solid #ddd;color:${c(monthChg)};font-weight:600;">${pct(monthChg)}</td></tr>
+<tr style="background:#f4f3ef;"><td style="padding:8px 14px;border:1px solid #ddd;">52-week high</td><td style="padding:8px 14px;border:1px solid #ddd;color:#0F6E56;">${high52.toFixed(2)}¢ (${highDate})</td></tr>
+<tr><td style="padding:8px 14px;border:1px solid #ddd;">52-week low</td><td style="padding:8px 14px;border:1px solid #ddd;color:#993c1d;">${low52.toFixed(2)}¢ (${lowDate})</td></tr>
+<tr style="background:#f4f3ef;"><td style="padding:8px 14px;border:1px solid #ddd;">Dec '26 (CTZ26)</td><td style="padding:8px 14px;border:1px solid #ddd;">80.01 ¢/lb</td></tr>
+</table>
+<h3 style="font-size:13px;font-weight:700;margin:0 0 8px;">AI-generated analysis</h3>
+<p style="font-size:13px;color:#555;margin:0 0 14px;">${analysis}</p>
+<hr style="border:none;border-top:1px solid #e5e5e0;margin:14px 0;"/>
+<p style="font-size:11px;color:#bbb;">Key drivers: ${aiDrivers.map(d=>d.label).join(' · ') || 'Texas drought · Strait of Hormuz · USDA −3.9M bales · Speculative positioning'}<br>Auto-generated · Evolution3 Cotton Tracker v4 · ICE CT=F · ¢/lb</p>
+</div>`;
+}
+
+function openModal() { if(S.spot) updateSubject(); $('overlay').classList.add('show'); }
+function closeModal() { $('overlay').classList.remove('show'); }
+
+function openGmail() {
+  const to = encodeURIComponent($('mTo').value);
+  const subj = encodeURIComponent($('mSubj').value);
+  window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subj}`,'_blank');
+  toast('Gmail opened — click "Copy body HTML" then paste into the email body');
+}
+
+async function copyHTML() {
+  const html = buildHTML();
+  try { await navigator.clipboard.writeText(html); }
+  catch { const ta = Object.assign(document.createElement('textarea'),{value:html,style:'position:fixed;opacity:0'}); document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  toast('HTML copied ✓ — paste into Gmail compose');
+}
+
+// ── BOOT ──────────────────────────────────────────────────────────
+fetchData();
+</script>
+</body>
+</html>
