@@ -515,45 +515,65 @@ async function sendViaOutlook() {
 }
 
 // ── FETCH PRICE VIA CLAUDE AI (web search) ───────────────────────
+// ── ALPHA VANTAGE PRICE FETCH ─────────────────────────────────────
+const AV_KEY = 'NNC0GI6UP3Y90RO8';
+
 async function fetchPriceViaAI() {
   try {
-    const today = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{
-          role: 'user',
-          content: `Search for the current Cotton No.2 ICE Futures (CT=F) price today ${today}. Find the current spot price in cents per pound, the day change percentage, and any recent weekly/monthly price data. Return ONLY a JSON object with these exact fields and nothing else:
-{"spot":78.62,"dayChg":-2.77,"weekChg":0.83,"monthChg":17.03,"high52":80.90,"low52":60.90,"source":"web search"}
-Use real current values from your search. All numbers in cents per pound or percentages.`
-        }]
-      })
-    });
-    const data = await resp.json();
-    // Extract text from response
-    const textBlock = data.content?.find(b => b.type === 'text');
-    if (!textBlock) return null;
-    const clean = textBlock.text.replace(/```json|```/g,'').trim();
-    // Find JSON in response
-    const jsonMatch = clean.match(/\{[^{}]+\}/);
-    if (!jsonMatch) return null;
-    const price = JSON.parse(jsonMatch[0]);
-    if (!price.spot || isNaN(price.spot)) return null;
-    // Build a minimal S object — chart data still from fallback
+    // Alpha Vantage — Cotton No.2 futures (CT=F)
+    // Using GLOBAL_QUOTE for current price
+    const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=CT%3DF&apikey=${AV_KEY}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const q = data['Global Quote'];
+    if (!q || !q['05. price']) return null;
+    const spot = parseFloat(q['05. price']);
+    const prev = parseFloat(q['08. previous close'] || spot);
+    const dayChg = parseFloat(q['10. change percent']?.replace('%','') || 0);
+    if (!spot || isNaN(spot)) return null;
+
+    // Also fetch weekly data for chart
+    const weeklyUrl = `https://www.alphavantage.co/query?function=TIME_SERIES_WEEKLY&symbol=CT%3DF&apikey=${AV_KEY}`;
+    const wr = await fetch(weeklyUrl, { signal: AbortSignal.timeout(8000) });
+    let labels = FALLBACK.labels, prices = FALLBACK.prices;
+    let high52 = FALLBACK.high52, low52 = FALLBACK.low52;
+    let highDate = FALLBACK.highDate, lowDate = FALLBACK.lowDate;
+    let weekChg = FALLBACK.weekChg, monthChg = FALLBACK.monthChg;
+
+    if (wr.ok) {
+      const wd = await wr.json();
+      const weekly = wd['Weekly Time Series'];
+      if (weekly) {
+        const entries = Object.entries(weekly)
+          .sort((a,b) => a[0].localeCompare(b[0]))
+          .slice(-52);
+        if (entries.length > 5) {
+          prices = entries.map(([,v]) => parseFloat(v['4. close']));
+          labels = entries.map(([d]) => {
+            const dt = new Date(d);
+            return dt.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+          });
+          high52 = Math.max(...prices);
+          low52 = Math.min(...prices);
+          const hiIdx = prices.lastIndexOf(high52);
+          const loIdx = prices.lastIndexOf(low52);
+          highDate = labels[hiIdx];
+          lowDate = labels[loIdx];
+          const weekAgo = prices[Math.max(0, prices.length-2)];
+          const monthAgo = prices[Math.max(0, prices.length-5)];
+          weekChg = weekAgo ? (spot-weekAgo)/weekAgo*100 : 0;
+          monthChg = monthAgo ? (spot-monthAgo)/monthAgo*100 : 0;
+          // Update last price point to current spot
+          prices[prices.length-1] = spot;
+        }
+      }
+    }
+
     return {
-      ...FALLBACK,
-      spot: price.spot,
-      dayChg: price.dayChg ?? FALLBACK.dayChg,
-      weekChg: price.weekChg ?? FALLBACK.weekChg,
-      monthChg: price.monthChg ?? FALLBACK.monthChg,
-      high52: price.high52 ?? FALLBACK.high52,
-      low52: price.low52 ?? FALLBACK.low52,
-      isFallback: false,
-      aiPriceSrc: true
+      labels, prices, spot, dayChg, weekChg, monthChg,
+      high52, low52, highDate, lowDate,
+      isFallback: false, aiPriceSrc: true
     };
   } catch(e) { return null; }
 }
@@ -676,8 +696,8 @@ async function fetchData() {
   pill('loading', 'Fetching via AI...');
   parsed = await fetchPriceViaAI();
   if (parsed) {
-    src = 'AI web search (CT=F live)';
-    notice('info', `✓ Live price fetched via AI · ${new Date().toLocaleTimeString()}`);
+    src = 'Alpha Vantage (CT=F live)';
+    notice('info', `✓ Live price fetched via Alpha Vantage · ${new Date().toLocaleTimeString()}`);
     setTimeout(()=>notice('',''), 4000);
   }
 
