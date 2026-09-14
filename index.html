@@ -170,11 +170,8 @@
       <div class="leg"><div class="leg-dot" style="background:#E24B4A"></div>52-wk high</div>
       <div class="leg"><div class="leg-dot" style="background:#BA7517"></div>52-wk low</div>
     </div>
-    <div class="events-row">
-      <div class="ev"><strong>May '25</strong> — prior year high ~72.06¢</div>
-      <div class="ev"><strong>Feb 6 '26</strong> — 52-wk low ~60.90¢</div>
-      <div class="ev"><strong>Mar '26</strong> — Iran/Hormuz; fertilizer +45%</div>
-      <div class="ev"><strong>Apr 17 '26</strong> — 12-month high ~80.90¢</div>
+    <div class="events-row" id="eventsRow">
+      <div class="ev"><strong>Loading...</strong></div>
     </div>
   </div>
 
@@ -734,6 +731,17 @@ function render(src) {
   setM('mLow', low52.toFixed(2)+'¢', 'dn');  setH('mLowH', lowDate);
   $('chartRange').textContent = (labels[0]||'') + ' → ' + (labels[labels.length-1]||'');
   renderChart(labels, prices);
+
+  // Dynamic events row based on actual data
+  const eventsRow = $('eventsRow');
+  if (eventsRow) {
+    eventsRow.innerHTML = `
+      <div class="ev"><strong>${labels[0]||'—'}</strong> — start of 52-wk range ~${(prices[0]||0).toFixed(2)}¢</div>
+      <div class="ev"><strong>${lowDate}</strong> — 52-wk low ~${low52.toFixed(2)}¢</div>
+      <div class="ev"><strong>${highDate}</strong> — 52-wk high ~${high52.toFixed(2)}¢</div>
+      <div class="ev"><strong>${labels[labels.length-1]||'Latest'}</strong> — current ~${spot.toFixed(2)}¢</div>
+    `;
+  }
   updateSubject();
   $('draftBtn').disabled = false;
   const ts = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
