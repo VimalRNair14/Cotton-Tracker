@@ -567,15 +567,44 @@ async function fetchPriceViaAI() {
       const low52 = Math.min(...prices);
       const hiIdx = prices.lastIndexOf(high52);
       const loIdx = prices.lastIndexOf(low52);
+      const highDate = labels[hiIdx];
+      const lowDate = labels[loIdx];
+
+      // Now fetch today's actual spot price via GLOBAL_QUOTE
+      let todaySpot = spot;
+      let todayDayChg = (spot - prev) / prev * 100;
+      try {
+        const quoteUrl = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=CT%3DF&apikey=${AV_KEY}`;
+        const qr = await fetchWithTimeout(quoteUrl, 8000);
+        if (qr.ok) {
+          const qd = await qr.json();
+          const q = qd['Global Quote'];
+          if (q && q['05. price'] && parseFloat(q['05. price']) > 0) {
+            todaySpot = parseFloat(q['05. price']);
+            todayDayChg = parseFloat(q['10. change percent']?.replace('%','') || todayDayChg);
+            // Add today's price as the last point on the chart
+            const todayLabel = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+            labels.push(todayLabel);
+            prices.push(todaySpot);
+          }
+        }
+      } catch(e) { /* use monthly spot if this fails */ }
+
+      const finalSpot = todaySpot;
+      const finalHigh = Math.max(...prices, todaySpot);
+      const finalLow = Math.min(...prices, todaySpot);
+      const finalHiIdx = prices.lastIndexOf(finalHigh);
+      const finalLoIdx = prices.lastIndexOf(finalLow);
 
       return {
-        labels, prices, spot,
-        dayChg: (spot - prev) / prev * 100,
-        weekChg: (spot - prev) / prev * 100,
-        monthChg: monthAgo ? (spot - monthAgo) / monthAgo * 100 : 0,
-        high52, low52,
-        highDate: labels[hiIdx],
-        lowDate: labels[loIdx],
+        labels, prices,
+        spot: finalSpot,
+        dayChg: todayDayChg,
+        weekChg: monthAgo ? (finalSpot - monthAgo) / monthAgo * 100 : 0,
+        monthChg: threeMonthAgo ? (finalSpot - threeMonthAgo) / threeMonthAgo * 100 : 0,
+        high52: finalHigh, low52: finalLow,
+        highDate: labels[finalHiIdx] || highDate,
+        lowDate: labels[finalLoIdx] || lowDate,
         isFallback: false, aiPriceSrc: true
       };
     }
