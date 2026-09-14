@@ -514,36 +514,105 @@ async function sendViaOutlook() {
   toast('Outlook opened + body copied to clipboard ✓', 4000);
 }
 
-// ── FETCH WITH FALLBACK CHAIN ─────────────────────────────────────
+// ── FETCH PRICE VIA CLAUDE AI (web search) ───────────────────────
+async function fetchPriceViaAI() {
+  try {
+    const today = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{
+          role: 'user',
+          content: `Search for the current Cotton No.2 ICE Futures (CT=F) price today ${today}. Find the current spot price in cents per pound, the day change percentage, and any recent weekly/monthly price data. Return ONLY a JSON object with these exact fields and nothing else:
+{"spot":78.62,"dayChg":-2.77,"weekChg":0.83,"monthChg":17.03,"high52":80.90,"low52":60.90,"source":"web search"}
+Use real current values from your search. All numbers in cents per pound or percentages.`
+        }]
+      })
+    });
+    const data = await resp.json();
+    // Extract text from response
+    const textBlock = data.content?.find(b => b.type === 'text');
+    if (!textBlock) return null;
+    const clean = textBlock.text.replace(/```json|```/g,'').trim();
+    // Find JSON in response
+    const jsonMatch = clean.match(/\{[^{}]+\}/);
+    if (!jsonMatch) return null;
+    const price = JSON.parse(jsonMatch[0]);
+    if (!price.spot || isNaN(price.spot)) return null;
+    // Build a minimal S object — chart data still from fallback
+    return {
+      ...FALLBACK,
+      spot: price.spot,
+      dayChg: price.dayChg ?? FALLBACK.dayChg,
+      weekChg: price.weekChg ?? FALLBACK.weekChg,
+      monthChg: price.monthChg ?? FALLBACK.monthChg,
+      high52: price.high52 ?? FALLBACK.high52,
+      low52: price.low52 ?? FALLBACK.low52,
+      isFallback: false,
+      aiPriceSrc: true
+    };
+  } catch(e) { return null; }
+}
 async function fetchJSON(url) {
   const proxies = [
-    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
     u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    u => `https://proxy.cors.sh/${u}`,
+    u => `https://thingproxy.freeboard.io/fetch/${u}`,
+    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+    u => `https://yacdn.org/proxy/${u}`,
+    u => u
   ];
-  // Run all proxies in parallel, return first successful result
-  const attempts = proxies.map(proxy =>
+  // Try first 3 in parallel, then fallback sequentially
+  const first3 = proxies.slice(0,3).map(proxy =>
     fetch(proxy(url), { signal: AbortSignal.timeout(5000) })
       .then(r => r.ok ? r.json() : Promise.reject())
       .catch(() => null)
   );
-  const results = await Promise.all(attempts);
-  return results.find(r => r !== null) || null;
+  const results = await Promise.all(first3);
+  const hit = results.find(r => r !== null);
+  if (hit) return hit;
+  // Sequential fallback for remaining proxies
+  for (const proxy of proxies.slice(3)) {
+    try {
+      const r = await fetch(proxy(url), { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) continue;
+      return await r.json();
+    } catch(e) { continue; }
+  }
+  return null;
 }
 
 async function fetchCSV(url) {
   const proxies = [
+    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    u => `https://corsproxy.io/?${encodeURIComponent(u)}`
+    u => `https://proxy.cors.sh/${u}`,
+    u => `https://thingproxy.freeboard.io/fetch/${u}`,
+    u => u
   ];
-  const attempts = proxies.map(proxy =>
+  const first3 = proxies.slice(0,3).map(proxy =>
     fetch(proxy(url), { signal: AbortSignal.timeout(5000) })
       .then(r => r.ok ? r.text() : Promise.reject())
       .then(t => t && t.length > 50 ? t : null)
       .catch(() => null)
   );
-  const results = await Promise.all(attempts);
-  return results.find(r => r !== null) || null;
+  const results = await Promise.all(first3);
+  const hit = results.find(r => r !== null);
+  if (hit) return hit;
+  for (const proxy of proxies.slice(3)) {
+    try {
+      const r = await fetch(proxy(url), { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) continue;
+      const text = await r.text();
+      if (text && text.length > 50) return text;
+    } catch(e) { continue; }
+  }
+  return null;
 }
 
 // ── PARSE STOOQ ───────────────────────────────────────────────────
@@ -603,26 +672,36 @@ async function fetchData() {
 
   let parsed = null, src = '';
 
-  const yahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/CT%3DF?range=1y&interval=1wk&includePrePost=false';
-  const today = new Date();
-  const d2 = today.toISOString().slice(0,10).replace(/-/g,'');
-  const d1 = new Date(today - 365*24*3600*1000).toISOString().slice(0,10).replace(/-/g,'');
-  const stooqURL = `https://stooq.com/q/d/l/?s=ct.f&d1=${d1}&d2=${d2}&i=w`;
+  // Try Claude AI web search first — no CORS issues
+  pill('loading', 'Fetching via AI...');
+  parsed = await fetchPriceViaAI();
+  if (parsed) {
+    src = 'AI web search (CT=F live)';
+    notice('info', `✓ Live price fetched via AI · ${new Date().toLocaleTimeString()}`);
+    setTimeout(()=>notice('',''), 4000);
+  }
 
-  // Fetch both sources simultaneously
-  const [yahooData, csvData] = await Promise.all([
-    fetchJSON(yahooURL),
-    fetchCSV(stooqURL)
-  ]);
-
-  if (yahooData) { parsed = parseYahoo(yahooData); if (parsed) src = 'Yahoo Finance (CT=F)'; }
-  if (!parsed && csvData && csvData.includes(',')) { parsed = parseStooq(csvData); if (parsed) src = 'Stooq (CT.F)'; }
+  // Fallback to direct proxies
+  if (!parsed) {
+    pill('loading', 'Trying data sources...');
+    const yahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/CT%3DF?range=1y&interval=1wk&includePrePost=false';
+    const today = new Date();
+    const d2 = today.toISOString().slice(0,10).replace(/-/g,'');
+    const d1 = new Date(today - 365*24*3600*1000).toISOString().slice(0,10).replace(/-/g,'');
+    const stooqURL = `https://stooq.com/q/d/l/?s=ct.f&d1=${d1}&d2=${d2}&i=w`;
+    const [yahooData, csvData] = await Promise.all([
+      fetchJSON(yahooURL),
+      fetchCSV(stooqURL)
+    ]);
+    if (yahooData) { parsed = parseYahoo(yahooData); if (parsed) src = 'Yahoo Finance (CT=F)'; }
+    if (!parsed && csvData && csvData.includes(',')) { parsed = parseStooq(csvData); if (parsed) src = 'Stooq (CT.F)'; }
+  }
 
   if (!parsed) {
     parsed = { ...FALLBACK };
     src = 'last known (Apr 22 2026)';
     notice('warn', `⚠ Could not reach live data. Showing last known prices from Apr 22, 2026. <a href="https://finance.yahoo.com/quote/CT=F" target="_blank" style="color:var(--amber)">View live ↗</a>`);
-  } else {
+  } else if (!parsed.aiPriceSrc) {
     notice('info', `✓ Live data loaded from ${src} · ${new Date().toLocaleTimeString()}`);
     setTimeout(()=>notice('',''), 4000);
   }
