@@ -151,8 +151,8 @@
   <div class="metrics">
     <div class="metric"><div class="lbl">Spot price</div><div class="val" id="mSpot">—</div><div class="hint">¢/lb · front-month</div></div>
     <div class="metric"><div class="lbl">Day change</div><div class="val" id="mDay">—</div><div class="hint" id="mDayH">vs prev session</div></div>
-    <div class="metric"><div class="lbl">Week change</div><div class="val" id="mWeek">—</div><div class="hint">7-day</div></div>
-    <div class="metric"><div class="lbl">Month change</div><div class="val" id="mMonth">—</div><div class="hint">30-day</div></div>
+    <div class="metric"><div class="lbl">Week change</div><div class="val" id="mWeek">—</div><div class="hint">5 sessions</div></div>
+    <div class="metric"><div class="lbl">Month change</div><div class="val" id="mMonth">—</div><div class="hint">21 sessions</div></div>
     <div class="metric"><div class="lbl">52-wk high</div><div class="val up" id="mHigh">—</div><div class="hint" id="mHighH">—</div></div>
     <div class="metric"><div class="lbl">52-wk low</div><div class="val dn" id="mLow">—</div><div class="hint" id="mLowH">—</div></div>
   </div>
@@ -163,7 +163,7 @@
       <div style="font-size:11px;color:var(--hint)" id="chartRange">—</div>
     </div>
     <div class="chart-wrap">
-      <canvas id="chart" role="img" aria-label="Cotton No.2 ICE futures weekly closing prices over 52 weeks"></canvas>
+      <canvas id="chart" role="img" aria-label="Cotton No.2 ICE futures weekly closing prices over 2 years"></canvas>
     </div>
     <div class="legend-row">
       <div class="leg"><div class="leg-dot" style="background:#1D9E75"></div>Weekly close</div>
@@ -273,15 +273,6 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// ── FALLBACK DATA (last known, Apr 22 2026) ──────────────────────
-const FALLBACK = {
-  labels: ['Sep 25','Oct 25','Nov 25','Dec 25','Jan 26','Feb 26','Mar 26','Apr 26','May 26','Jun 26','Jul 26','Aug 26','14 Sep'],
-  prices: [65.1,66.2,65.8,64.5,63.2,62.1,68.5,78.2,85.5,80.3,82.1,86.5,85.07],
-  spot: 85.07, dayChg: 0.5, weekChg: -1.2, monthChg: -1.7,
-  high52: 93.0, low52: 62.1, highDate: 'Sep 26', lowDate: 'Feb 26',
-  isFallback: true
-};
-
 let S = {};
 let chartInst = null;
 let scheduleInterval = null;
@@ -508,188 +499,94 @@ async function sendViaOutlook() {
   toast('Outlook opened + body copied to clipboard ✓', 4000);
 }
 
-// ── FETCH PRICE VIA CLAUDE AI (web search) ───────────────────────
-// ── ALPHA VANTAGE PRICE FETCH ─────────────────────────────────────
-const AV_KEY = 'NNC0GI6UP3Y90RO8';
+// ── DATA LOADING ──────────────────────────────
+// Primary: data.json, refreshed daily by GitHub Actions (.github/workflows/update-cotton-data.yml)
+// Backup:  Yahoo CT=F via public CORS proxies (flaky, used only if data.json missing/stale)
+// No hardcoded prices anywhere — if nothing loads, the page says so.
 
 async function fetchWithTimeout(url, ms) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), ms);
-  try {
-    const r = await fetch(url, { signal: controller.signal });
-    clearTimeout(id);
-    return r;
-  } catch(e) {
-    clearTimeout(id);
-    throw e;
-  }
+  try { const r = await fetch(url, { signal: controller.signal, cache: 'no-store' }); clearTimeout(id); return r; }
+  catch(e) { clearTimeout(id); throw e; }
 }
 
-async function fetchPriceViaAI() {
-  try {
-    // Try monthly first (most reliable on free tier), then weekly
-    const intervals = ['monthly', 'weekly'];
-    for (const interval of intervals) {
-      const url = `https://www.alphavantage.co/query?function=COTTON&interval=${interval}&apikey=${AV_KEY}`;
-      let r;
-      try { r = await fetchWithTimeout(url, 12000); } catch(e) { continue; }
-      if (!r.ok) continue;
+const fmtD = iso => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'2-digit', timeZone:'UTC' });
+const chg = (a, b) => (a != null && b) ? (a - b) / b * 100 : null;
 
-      let data;
-      try { data = await r.json(); } catch(e) { continue; }
+// weekly/daily: [{d:'YYYY-MM-DD', c:number}] ascending
+function buildState(weekly, daily, asOfIso) {
+  weekly = weekly.filter(r => r.c != null).sort((a,b) => a.d.localeCompare(b.d));
+  daily  = (daily || []).filter(r => r.c != null).sort((a,b) => a.d.localeCompare(b.d));
+  if (weekly.length < 10) return null;
 
-      if (data['Information'] || data['Note']) {
-        console.warn('AV limit:', data['Information'] || data['Note']);
-        continue;
-      }
+  const spotRow = daily.length ? daily[daily.length-1] : weekly[weekly.length-1];
+  const spot = spotRow.c;
+  const back = n => daily.length > n ? daily[daily.length-1-n].c : null;
+  const dayChg   = back(1);
+  const weekChg  = back(5)  ?? (weekly.length > 1 ? weekly[weekly.length-2].c : null);
+  const monthChg = back(21) ?? (weekly.length > 4 ? weekly[weekly.length-5].c : null);
 
-      const series = data['data'];
-      if (!series || !Array.isArray(series) || series.length < 3) continue;
+  // Chart: last 2 years of weekly closes; force final point = latest daily close
+  const chartRows = weekly.slice(-105);
+  if (daily.length) chartRows[chartRows.length-1] = { d: chartRows[chartRows.length-1].d, c: spot };
+  const labels = chartRows.map(r => fmtD(r.d));
+  const prices = chartRows.map(r => r.c);
 
-      const sorted = series
-        .filter(d => d.value && d.value !== '.' && !isNaN(parseFloat(d.value)))
-        .sort((a,b) => a.date.localeCompare(b.date)) // ascending: oldest first
-        .slice(-24); // last 24 months = 2 years
+  // 52-week high/low: only the last 365 days, not the whole 2-year chart
+  const cutoff = new Date(Date.parse(spotRow.d) - 365*86400000).toISOString().slice(0,10);
+  const yr = chartRows.filter(r => r.d >= cutoff);
+  const hi = yr.reduce((m,r) => r.c > m.c ? r : m, yr[0]);
+  const lo = yr.reduce((m,r) => r.c < m.c ? r : m, yr[0]);
 
-      if (sorted.length < 3) continue;
-
-      const prices = sorted.map(d => parseFloat(d.value));
-      const labels = sorted.map(d => {
-        const dt = new Date(d.date);
-        return dt.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
-      });
-
-      const spot = prices[prices.length - 1];
-      const prev = prices[prices.length - 2] || spot;
-      const monthAgo = prices[Math.max(0, prices.length - 2)];
-      const threeMonthAgo = prices[Math.max(0, prices.length - 4)];
-      const high52 = Math.max(...prices);
-      const low52 = Math.min(...prices);
-      const hiIdx = prices.lastIndexOf(high52);
-      const loIdx = prices.lastIndexOf(low52);
-      const highDate = labels[hiIdx];
-      const lowDate = labels[loIdx];
-
-      // GLOBAL_QUOTE for CT=F not supported on free tier
-      // Add current known price as today's data point
-      const todayLabel = new Date().toLocaleDateString('en-GB', { day:'numeric', month:'short' });
-      const currentKnownPrice = 85.07; // Updated manually from market data
-
-      // Add Aug and today if not already in monthly data
-      const lastDate = sorted[sorted.length-1]?.date || '';
-      if (lastDate <= '2026-07-31') {
-        // Add Aug average (~86.5 from chart) and today
-        labels.push('Aug 26');
-        prices.push(86.5);
-        labels.push(todayLabel);
-        prices.push(currentKnownPrice);
-      } else if (lastDate <= '2026-08-31') {
-        labels.push(todayLabel);
-        prices.push(currentKnownPrice);
-      }
-
-      const finalSpot = currentKnownPrice;
-      const finalHigh = Math.max(...prices);
-      const finalLow = Math.min(...prices);
-      const finalHiIdx = prices.lastIndexOf(finalHigh);
-      const finalLoIdx = prices.lastIndexOf(finalLow);
-
-      return {
-        labels, prices,
-        spot: finalSpot,
-        dayChg: 0.50,
-        weekChg: -1.20,
-        monthChg: -1.70,
-        high52: finalHigh, low52: finalLow,
-        highDate: labels[finalHiIdx],
-        lowDate: labels[finalLoIdx],
-        isFallback: false, aiPriceSrc: true
-      };
-    }
-    return null;
-  } catch(e) {
-    console.error('AV fetch error:', e);
-    return null;
-  }
+  return {
+    labels, prices, spot,
+    dayChg: chg(spot, dayChg), weekChg: chg(spot, weekChg), monthChg: chg(spot, monthChg),
+    high52: hi.c, low52: lo.c, highDate: fmtD(hi.d), lowDate: fmtD(lo.d),
+    asOf: asOfIso || spotRow.d, asOfLabel: fmtD(spotRow.d), isFallback: false
+  };
 }
+
+async function loadFromDataJson() {
+  try {
+    const r = await fetchWithTimeout('data.json?t=' + Date.now(), 8000);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const st = buildState(j.weekly, j.daily, j.updated_utc);
+    if (!st) return null;
+    const ageDays = (Date.now() - Date.parse(st.asOf.length > 10 ? st.asOf : st.asOf + 'T00:00:00Z')) / 86400000;
+    st.stale = ageDays > 4;  // > 4 days covers weekends/holidays
+    return st;
+  } catch(e) { console.warn('data.json load failed', e); return null; }
+}
+
 async function fetchJSON(url) {
-  const proxies = [
-    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    u => `https://proxy.cors.sh/${u}`
-  ];
-  const attempts = proxies.map(proxy =>
-    fetchWithTimeout(proxy(url), 5000)
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .catch(() => null)
-  );
-  const results = await Promise.all(attempts);
-  return results.find(r => r !== null) || null;
-}
-
-async function fetchCSV(url) {
   const proxies = [
     u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
     u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
   ];
-  const attempts = proxies.map(proxy =>
-    fetchWithTimeout(proxy(url), 5000)
-      .then(r => r.ok ? r.text() : Promise.reject())
-      .then(t => t && t.length > 50 ? t : null)
-      .catch(() => null)
-  );
-  const results = await Promise.all(attempts);
-  return results.find(r => r !== null) || null;
+  const results = await Promise.all(proxies.map(p =>
+    fetchWithTimeout(p(url), 8000).then(r => r.ok ? r.json() : null).catch(() => null)));
+  return results.find(r => r && r.chart && r.chart.result) || null;
 }
 
-// ── PARSE STOOQ ───────────────────────────────────────────────────
-function parseStooq(csv) {
-  const lines = csv.trim().split('\n').filter(l=>l&&!l.startsWith('Date'));
-  const rows = lines.map(l => {
-    const p = l.split(',');
-    return { date: p[0], close: parseFloat(p[4]) };
-  }).filter(r=>!isNaN(r.close)).sort((a,b)=>a.date.localeCompare(b.date));
-  if (rows.length < 5) return null;
-  const prices = rows.map(r=>r.close);
-  const labels = rows.map(r=>{ const d=new Date(r.date); return d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}); });
-  const spot = prices[prices.length-1];
-  const prev = prices[prices.length-2]||spot;
-  const monthAgoIdx = Math.max(0, prices.length-5);
-  const monthAgo = prices[monthAgoIdx];
-  const high52 = Math.max(...prices), low52 = Math.min(...prices);
-  const hiIdx = prices.lastIndexOf(high52), loIdx = prices.lastIndexOf(low52);
-  return { labels, prices, spot,
-    dayChg: (spot-prev)/prev*100, weekChg: (spot-prev)/prev*100,
-    monthChg: (spot-monthAgo)/monthAgo*100,
-    high52, low52, highDate: labels[hiIdx], lowDate: labels[loIdx], isFallback: false };
-}
-
-// ── PARSE YAHOO ───────────────────────────────────────────────────
-function parseYahoo(data) {
+function yahooRows(data) {
   try {
     const res = data.chart.result[0];
-    const meta = res.meta;
-    const ts = res.timestamp;
     const closes = res.indicators.quote[0].close;
-    const valid = ts.map((t,i)=>({t,c:closes[i]})).filter(x=>x.c!=null);
-    if (valid.length < 5) return null;
-    const prices = valid.map(x=>x.c);
-    const labels = valid.map(x=>fmtTs(x.t));
-    const spot = prices[prices.length-1];
-    const prev = prices[prices.length-2]||spot;
-    const monthAgoIdx = Math.max(0, prices.length-5);
-    const monthAgo = prices[monthAgoIdx];
-    const high52 = Math.max(...prices), low52 = Math.min(...prices);
-    const hiIdx = prices.lastIndexOf(high52), loIdx = prices.lastIndexOf(low52);
-    return { labels, prices, spot,
-      dayChg: meta.regularMarketChangePercent ?? (spot-prev)/prev*100,
-      weekChg: (spot-prev)/prev*100,
-      monthChg: (spot-monthAgo)/monthAgo*100,
-      high52, low52, highDate: labels[hiIdx], lowDate: labels[loIdx], isFallback: false };
+    return res.timestamp.map((t,i) => ({ d: new Date(t*1000).toISOString().slice(0,10), c: closes[i] })).filter(r => r.c != null);
   } catch(e) { return null; }
 }
 
-// ── MAIN FETCH ────────────────────────────────────────────────────
+async function loadFromYahooProxy() {
+  const base = 'https://query1.finance.yahoo.com/v8/finance/chart/CT%3DF?includePrePost=false';
+  const [w, d] = await Promise.all([fetchJSON(base + '&range=2y&interval=1wk'), fetchJSON(base + '&range=3mo&interval=1d')]);
+  const weekly = w && yahooRows(w);
+  if (!weekly) return null;
+  return buildState(weekly, d && yahooRows(d));
+}
+
+// ── MAIN FETCH ────────────────────────────────
 async function fetchData() {
   pill('loading','Fetching...');
   $('refreshBtn').disabled = true;
@@ -697,52 +594,27 @@ async function fetchData() {
   $('analysis').textContent = 'Loading...';
   $('analysis').classList.remove('ai-loading');
 
-  let parsed = null, src = '';
-
-  // Try Alpha Vantage first — no CORS issues
-  pill('loading', 'Fetching via Alpha Vantage...');
-  parsed = await fetchPriceViaAI();
-  if (parsed) {
-    src = 'Alpha Vantage (COTTON)';
-    notice('info', `✓ Live price fetched via Alpha Vantage · ${new Date().toLocaleTimeString()}`);
-    setTimeout(()=>notice('',''), 4000);
-  } else {
-    notice('warn', `⚠ Alpha Vantage fetch failed — trying backup sources...`);
-  }
-
-  // Fallback to direct proxies
-  if (!parsed) {
-    pill('loading', 'Trying data sources...');
-    const yahooURL = 'https://query1.finance.yahoo.com/v8/finance/chart/CT%3DF?range=1y&interval=1wk&includePrePost=false';
-    const today = new Date();
-    const d2 = today.toISOString().slice(0,10).replace(/-/g,'');
-    const d1 = new Date(today - 365*24*3600*1000).toISOString().slice(0,10).replace(/-/g,'');
-    const stooqURL = `https://stooq.com/q/d/l/?s=ct.f&d1=${d1}&d2=${d2}&i=w`;
-    const [yahooData, csvData] = await Promise.all([
-      fetchJSON(yahooURL),
-      fetchCSV(stooqURL)
-    ]);
-    if (yahooData) { parsed = parseYahoo(yahooData); if (parsed) src = 'Yahoo Finance (CT=F)'; }
-    if (!parsed && csvData && csvData.includes(',')) { parsed = parseStooq(csvData); if (parsed) src = 'Stooq (CT.F)'; }
+  let parsed = await loadFromDataJson(), src = 'data.json (Yahoo CT=F, daily update)';
+  if (!parsed || parsed.stale) {
+    pill('loading', 'Trying live Yahoo feed...');
+    const live = await loadFromYahooProxy();
+    if (live && (!parsed || live.asOf > parsed.asOf)) { parsed = live; src = 'Yahoo Finance CT=F (live)'; }
   }
 
   if (!parsed) {
-    parsed = { ...FALLBACK };
-    src = 'last known (Sep 14 2026)';
-    notice('warn', `⚠ Could not reach live data. Showing last known prices. <a href="https://finance.yahoo.com/quote/CT=F" target="_blank" style="color:var(--amber)">View live ↗</a>`);
-  } else if (!parsed.aiPriceSrc) {
-    notice('info', `✓ Live data loaded from ${src} · ${new Date().toLocaleTimeString()}`);
-    setTimeout(()=>notice('',''), 4000);
-  } else {
-    notice('info', `✓ Live data loaded from Alpha Vantage · ${new Date().toLocaleTimeString()}`);
-    setTimeout(()=>notice('',''), 4000);
+    pill('err', 'No data');
+    notice('warn', `⚠ Could not load cotton prices (data.json missing and live feed unreachable). No numbers shown rather than stale ones. <a href="https://finance.yahoo.com/quote/CT=F" target="_blank" style="color:var(--amber)">Check Yahoo ↗</a>`);
+    $('refreshBtn').disabled = false;
+    return;
   }
+
+  if (parsed.stale) notice('warn', `⚠ Prices are as of ${parsed.asOfLabel} — the daily update has not run recently. Check the repo's Actions tab.`);
+  else notice('info', `✓ Prices as of ${parsed.asOfLabel} · ${src}`);
 
   S = parsed;
   render(src);
   $('refreshBtn').disabled = false;
 
-  // Trigger AI analysis and drivers after data loads
   await runAIDrivers();
   await runAIAnalysis();
   renderRecipients();
@@ -766,7 +638,7 @@ function render(src) {
   const eventsRow = $('eventsRow');
   if (eventsRow) {
     eventsRow.innerHTML = `
-      <div class="ev"><strong>${labels[0]||'—'}</strong> — start of 52-wk range ~${(prices[0]||0).toFixed(2)}¢</div>
+      <div class="ev"><strong>${labels[0]||'—'}</strong> — start of 2-yr chart ~${(prices[0]||0).toFixed(2)}¢</div>
       <div class="ev"><strong>${lowDate}</strong> — 52-wk low ~${low52.toFixed(2)}¢</div>
       <div class="ev"><strong>${highDate}</strong> — 52-wk high ~${high52.toFixed(2)}¢</div>
       <div class="ev"><strong>${labels[labels.length-1]||'Latest'}</strong> — current ~${spot.toFixed(2)}¢</div>
@@ -775,7 +647,7 @@ function render(src) {
   updateSubject();
   $('draftBtn').disabled = false;
   const ts = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
-  pill('live', (S.isFallback?'Offline ':'Live · ')+ts);
+  pill(S.stale?'err':'live', (S.stale?'Stale · ':'As of ')+S.asOfLabel);
 }
 
 function renderChart(labels, prices) {
